@@ -136,10 +136,10 @@ def index():
         # matplotlib를 이용하여 그래프 생성
         plt.figure(figsize=(6,4))
         plt.plot(times, bac_values, label="BAC")
-        plt.axhline(y=safe_threshold, color='green', linestyle='--', label="안전 기준 (0.03%)")
-        plt.xlabel("시간 (시간)")
-        plt.ylabel("혈중 알콜 농도 (%)")
-        plt.title("시간에 따른 혈중 알콜 농도 변화")
+        plt.axhline(y=safe_threshold, color='green', linestyle='--', label="Safe Limit (0.03%)")
+        plt.xlabel("Time (hours)")
+        plt.ylabel("Blood Alcohol Concentration (%)")
+        plt.title("BAC over Time")
         plt.legend()
         plt.grid(True)
         
