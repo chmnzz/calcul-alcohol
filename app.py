@@ -1,4 +1,7 @@
 from flask import Flask, request, render_template_string
+import io, base64
+import numpy as np
+import matplotlib.pyplot as plt
 
 app = Flask(__name__)
 
@@ -40,7 +43,8 @@ alcohol_info = {
 def index():
     result = ""
     details = ""
-    # 이전에 입력했던 값을 저장할 딕셔너리 (폼 데이터 유지용)
+    graph_img = None  # 그래프 이미지 (base64 문자열)
+    # 폼 데이터 유지용 딕셔너리
     prev_data = {}
 
     if request.method == 'POST':
@@ -49,7 +53,7 @@ def index():
         weight = float(request.form.get('weight'))
         hours = float(request.form.get('hours'))
         
-        # 각 주류별 섭취량 계산
+        # 각 주류별 섭취량 및 총 알콜 계산
         counts = {}
         total_alcohol = 0
         details_list = []
@@ -62,7 +66,7 @@ def index():
                 f"{alcohol_info[key]['name']}: {count}회 ({alcohol_info[key]['volume']}, {alcohol_info[key]['abv']}) → {grams:.2f} g"
             )
         
-        # 이전 입력 데이터를 보존 (폼에 다시 출력)
+        # 폼에 다시 출력하기 위해 입력값 보존
         prev_data = {
             'gender': gender,
             'weight': weight,
@@ -74,12 +78,13 @@ def index():
             'whiskey': counts.get('whiskey', 0)
         }
         
-        # 성별에 따른 알콜 분포율: 남성은 0.68, 여성은 0.55 (Widmark 공식)
+        # 성별에 따른 알콜 분포율: 남성 0.68, 여성 0.55
         r = 0.68 if gender == 'male' else 0.55
         
-        # Widmark 공식으로 혈중 알콜 농도(BAC) 계산
-        bac = (total_alcohol / (weight * 1000 * r)) * 100 - 0.015 * hours
-        bac = max(bac, 0)  # 음수일 경우 0으로 조정
+        # 초기 BAC (마신 직후, 소모 전)
+        initial_bac = (total_alcohol / (weight * 1000 * r)) * 100
+        # 사용자가 입력한 경과 시간에 따른 현재 BAC (음수가 되면 0으로 처리)
+        bac = max(initial_bac - 0.015 * hours, 0)
         
         # 처벌 기준 (예시)
         # BAC < 0.03: 운전해도 괜찮음  
@@ -98,7 +103,8 @@ def index():
         details = "<ul>" + "".join(f"<li>{item}</li>" for item in details_list) + "</ul>"
         result = (
             f"<p>총 알콜 섭취량: {total_alcohol:.2f} g</p>"
-            f"<p>혈중 알콜 농도 (BAC): {bac:.3f}%</p>"
+            f"<p>마신 직후 BAC: {initial_bac:.3f}%</p>"
+            f"<p>음주 후 {hours:.1f}시간 경과 시 BAC: {bac:.3f}%</p>"
             "<p>처벌 기준 (예시):</p>"
             "<ul>"
             "<li>BAC 0.03% 미만: 운전해도 괜찮습니다.</li>"
@@ -108,8 +114,39 @@ def index():
             "</ul>"
             f"<p>최종 결과: {penalty}</p>"
         )
-    
-    # HTML 템플릿: 입력폼에 이전 데이터가 남도록 value 속성을 추가
+        
+        # 시간에 따른 BAC 변화 그래프 생성
+        # 안전 운전 기준: 0.03%
+        safe_threshold = 0.03
+        if initial_bac > safe_threshold:
+            # BAC가 safe_threshold 이하로 떨어질 때까지 필요한 시간 (시간 단위)
+            time_to_safe = (initial_bac - safe_threshold) / 0.015
+        else:
+            time_to_safe = 0
+        
+        # 그래프를 좀 더 보기 좋게 하기 위해 약간의 여유 시간 추가 (최소 1시간)
+        T_end = time_to_safe + 1 if time_to_safe > 0 else 1
+        times = np.linspace(0, T_end, 100)
+        bac_values = [max(initial_bac - 0.015 * t, 0) for t in times]
+        
+        # matplotlib를 이용하여 그래프 생성
+        plt.figure(figsize=(6,4))
+        plt.plot(times, bac_values, label="BAC")
+        plt.axhline(y=safe_threshold, color='green', linestyle='--', label="안전 기준 (0.03%)")
+        plt.xlabel("시간 (시간)")
+        plt.ylabel("혈중 알콜 농도 (%)")
+        plt.title("시간에 따른 혈중 알콜 농도 변화")
+        plt.legend()
+        plt.grid(True)
+        
+        # 그래프 이미지를 메모리 버퍼에 저장한 후 base64 인코딩
+        buf = io.BytesIO()
+        plt.savefig(buf, format="png", bbox_inches="tight")
+        buf.seek(0)
+        graph_img = base64.b64encode(buf.getvalue()).decode("utf-8")
+        plt.close()  # plt 객체 닫기
+
+    # HTML 템플릿: 폼에는 이전 입력값이 남도록 하고, 그래프 이미지를 표시
     html = '''
     <!doctype html>
     <html>
@@ -154,10 +191,18 @@ def index():
             <h2>측정 결과</h2>
             {{ result | safe }}
         </div>
+        
+        {% if graph_img %}
+        <hr>
+        <div>
+            <h2>시간에 따른 혈중 알콜 농도 변화</h2>
+            <img src="data:image/png;base64,{{ graph_img }}" alt="BAC over time graph">
+        </div>
+        {% endif %}
     </body>
     </html>
     '''
-    return render_template_string(html, result=result, details=details, alcohol_info=alcohol_info, prev_data=prev_data)
+    return render_template_string(html, result=result, details=details, alcohol_info=alcohol_info, prev_data=prev_data, graph_img=graph_img)
 
 if __name__ == '__main__':
     app.run(debug=True)
