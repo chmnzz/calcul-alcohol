@@ -1,7 +1,11 @@
 from flask import Flask, request, render_template_string
 import io, base64
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
+
 
 app = Flask(__name__)
 
